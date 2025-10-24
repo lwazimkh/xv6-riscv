@@ -7,6 +7,8 @@
 #include "proc.h"
 #include "vm.h"
 
+extern struct proc proc[NPROC];
+
 uint64
 sys_exit(void)
 {
@@ -107,3 +109,26 @@ sys_uptime(void)
   release(&tickslock);
   return xticks;
 }
+
+uint64
+sys_getfilenum(void){
+  int pid;
+  argint(0, &pid);
+  struct proc *p;
+  int count = 0;
+    // Loop walks through the process table and finds the target PID
+    for (p = proc; p < &proc[NPROC]; p++){
+      acquire(&p->lock);
+      if(p->pid == pid && p->state != UNUSED){
+        // Counts all open files in the table
+        for (int i = 0; i < NOFILE; i++){
+          if (p->ofile[i] != 0)
+            count++;
+        }
+        release(&p->lock);
+        return count;
+      }
+      release(&p->lock);
+    }
+    return -1; //PID not found
+  }
