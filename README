@@ -46,3 +46,71 @@ You will need a RISC-V "newlib" tool chain from
 https://github.com/riscv/riscv-gnu-toolchain, and qemu compiled for
 riscv64-softmmu.  Once they are installed, and in your shell
 search path, you can run "make qemu".
+
+**STRIDE SCHEDULER IMPLEMENTATION**
+
+Lwazi Mkhwanazi
+Moussa Seye
+
+**Overview**:
+This project implements a stride scheduler in xv6.
+A new system call (setStride) and a modification to the scheduler
+ensure proportional CPU sharing based on process stride values. 
+Lower stride -> more CPU time
+
+**FILES MODIFIED**
+
+**Kernel**
+
+* kernel/proc.h
+    * added int stride;
+    * added int pass;
+    * added to struct proc.
+
+* kernel/proc.c
+    * updated allocproc() to initialize stride and pass.
+    * Modified scheduler() to select process with the lowest pass value.
+    * Added global passTotal to track the total of passes.
+    * Added logic to increment pass by stride.
+
+* kernel/sysproc.c
+    * Added implementation of sys_setStride()
+
+* kernel/syscall.c
+    * Added syscall entry for SYS_setStride.
+
+* kernel/syscall.h
+    * Added syscall number for SYS_setStride.
+
+**User**
+
+* user.h
+    * Added prototype: int setStride(int);
+
+* usys.pl 
+    * Added entry("setStride");
+
+* getpinfo.c
+    * Added code to print PID, INUSE, RUNTIME & PASS.
+
+**How the scheduler works**
+
+    Each process has:
+        * stride - determines the share of CPU
+        * pass - scheduler metric that increases after each run
+        * Lower pass is selected to run next
+
+    Scheduling Algorithm:
+        1. Find all runnable processes
+        2. Choose the process with the minimum pass value
+        3. Run it and update: p->pass += p->stride;
+    3
+    System Call setStride()
+        * Used by user processes to assign their CPU share.
+        Valid stride >= 1.
+
+**Testing and Evidence**
+
+    We created multiple long running processes with different strides and ran getpinfo to see how the processes were behaving.
+
+    ![Stride Scheduler testing and evidence](image.png)

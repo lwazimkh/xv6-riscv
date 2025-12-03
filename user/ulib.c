@@ -3,7 +3,9 @@
 #include "kernel/fcntl.h"
 #include "kernel/riscv.h"
 #include "kernel/vm.h"
+#include "kernel/syscall.h"
 #include "user/user.h"
+
 
 //
 // wrapper so that it's OK if main() does not call exit().
@@ -158,4 +160,3 @@ char *
 sbrklazy(int n) {
   return sys_sbrk(n, SBRK_LAZY);
 }
-

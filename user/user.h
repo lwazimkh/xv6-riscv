@@ -1,4 +1,5 @@
 #define SBRK_ERROR ((char *)-1)
+#include "kernel/pstat.h"
 
 struct stat;
 
@@ -25,6 +26,8 @@ char* sys_sbrk(int,int);
 int pause(int);
 int uptime(void);
 int getfilenum(int pid);
+int getpinfo(struct pstat *ps);
+int setStride(int);
 
 // ulib.c
 int stat(const char*, struct stat*);

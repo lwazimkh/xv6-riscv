@@ -6,6 +6,7 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "vm.h"
+#include "pstat.h"
 
 extern struct proc proc[NPROC];
 
@@ -132,3 +133,27 @@ sys_getfilenum(void){
     }
     return -1; //PID not found
   }
+
+  uint64
+  sys_getpinfo(void)
+  {
+    uint64 addr;
+    argaddr(0, &addr);
+    return getpinfo(addr);
+  }
+
+uint64 sys_setStride(void) {
+    int stride;
+    struct proc *p = myproc();
+
+    argint(0, &stride);
+    
+    if (stride < 1)
+        return -1;
+
+    acquire(&p->lock);
+    p->stride = stride;
+    release(&p->lock);
+
+    return 0;
+}

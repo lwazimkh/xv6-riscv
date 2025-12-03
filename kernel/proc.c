@@ -5,10 +5,15 @@
 #include "spinlock.h"
 #include "proc.h"
 #include "defs.h"
+#include "pstat.h"
+#define MAX_PASS_TOTAL 1000000
 
 struct cpu cpus[NCPU];
 
 struct proc proc[NPROC];
+// Total pass value for all processes
+// increases by the stride of whichever process runs
+int passTotal = 0;
 
 struct proc *initproc;
 
@@ -124,6 +129,9 @@ allocproc(void)
 found:
   p->pid = allocpid();
   p->state = USED;
+  p->runtime = 0; //Initialize runtime
+  p->pass = 0;
+  p->stride = 1; // default stride
 
   // Allocate a trapframe page.
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
@@ -169,6 +177,9 @@ freeproc(struct proc *p)
   p->killed = 0;
   p->xstate = 0;
   p->state = UNUSED;
+  p->runtime = 0;
+  p->pass = 0;
+  p->stride = 0;
 }
 
 // Create a user page table for a given process, with no user memory,
@@ -414,6 +425,23 @@ kwait(uint64 addr)
   }
 }
 
+//
+//
+//
+int
+setstride(int strideLength)
+{
+  struct proc *p = myproc();
+  if(strideLength < 1)
+    return -1;
+  
+  acquire(&p->lock);
+  p->stride = strideLength;
+  release(&p->lock);
+
+  return 0;
+}
+
 // Per-CPU process scheduler.
 // Each CPU calls scheduler() after setting itself up.
 // Scheduler never returns.  It loops, doing:
@@ -425,6 +453,7 @@ void
 scheduler(void)
 {
   struct proc *p;
+  struct proc *min_process;
   struct cpu *c = mycpu();
 
   c->proc = 0;
@@ -437,30 +466,84 @@ scheduler(void)
     intr_on();
     intr_off();
 
-    int found = 0;
+    min_process = 0; // pointer to process with the lowest pass
+
+    // Loop through the process table to find a RUNNABLE process
+    // with the smallest pass value. For each process, acquire its 
+    // lock to examine fields safely. If a process is not the current
+    // minimum, release its lock immediately. If it becomes the new
+    // minimum-pass process, release the previous minimum's lock
+    // and hold this one so we can safely switch to it later.
     for(p = proc; p < &proc[NPROC]; p++) {
       acquire(&p->lock);
-      if(p->state == RUNNABLE) {
-        // Switch to chosen process.  It is the process's job
-        // to release its lock and then reacquire it
-        // before jumping back to us.
-        p->state = RUNNING;
-        c->proc = p;
-        swtch(&c->context, &p->context);
 
-        // Process is done running for now.
-        // It should have changed its p->state before coming back.
-        c->proc = 0;
-        found = 1;
+      if(p->state == RUNNABLE) {
+        // If this is the first RUNNABLE process, or this process has a
+        // smaller pass value than the current minimum, it becomes the
+        // new minimum-pass process.
+        if(min_process == 0 || p->pass < min_process->pass){
+          
+          // Release the previously selected minimum process lock,
+          // because we found a lower-pass process.
+          if(min_process)
+            release(&min_process->lock);
+
+          min_process = p;  // update minimum pointer
+
+        } else {
+          // Not the smallest pass; release lock immediately.
+          release(&p->lock);
+        }
+      } else {
+        // Not RUNNABLE; release lock immediately.
+        release(&p->lock);
       }
-      release(&p->lock);
     }
-    if(found == 0) {
+
+    // If min_process is NULL, that means there were no runnable processes.
+    // In that case, yield control until an interrupt occurs.
+    if(!min_process){
       // nothing to run; stop running on this core until an interrupt.
       asm volatile("wfi");
+      continue;
     }
+
+    // Switch to chosen process. It is the process's job
+    // to release its lock and then reacquire it before
+    // jumping back to us.
+    min_process->state = RUNNING;
+
+    // Increment runtime each time a process runs
+    min_process->runtime++;
+
+    // Increment pass by stride
+    min_process->pass += min_process->stride;
+
+    // Global passTotal increases by the stride of whichever process runs
+    passTotal += min_process->stride;
+
+    if(passTotal >= MAX_PASS_TOTAL){
+
+      struct proc *q;
+      
+      for(q = proc; q < &proc[NPROC]; q++){
+        q->pass = 0;
+      }
+      passTotal = 0;
+    }
+
+    c->proc = min_process;
+    swtch(&c->context, &min_process->context);
+
+    // Process is done running for now.
+    // It should have changed its p->state before coming back.
+    c->proc = 0;
+
+    // Release the lock held for the selected process
+    release(&min_process->lock);
   }
 }
+
 
 // Switch to scheduler.  Must hold only p->lock
 // and have changed proc->state. Saves and restores
@@ -627,6 +710,41 @@ killed(struct proc *p)
   k = p->killed;
   release(&p->lock);
   return k;
+}
+
+//
+//
+//
+int
+getpinfo(uint64 addr)
+{
+  struct pstat ps;
+  struct proc *p;
+  int i = 0;
+  // Lock the process table before reading
+  for(p = proc; p < &proc[NPROC]; p++, i++){
+    if(p->state != UNUSED){
+      ps.inuse[i] = 1;
+      ps.pid[i] = p->pid;
+      ps.runtime[i] = p->runtime;
+      ps.pass[i] = p->pass;
+    }
+    else{
+      ps.inuse[i] = 0;
+      ps.pid[i] = 0;
+      ps.runtime[i] = 0;
+      ps.pass[i] = 0;
+    }
+  }
+
+  // Copy global passTotal
+  ps.passTotal = passTotal;
+
+  // Copy struct pstat from kernel to user space
+  if(copyout(myproc()->pagetable, addr, (char*)&ps, sizeof(ps)) <0 )
+    return -1; // Failure
+
+  return 0; // Success
 }
 
 // Copy to either a user address, or kernel address,
